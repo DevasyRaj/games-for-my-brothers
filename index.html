@@ -1,0 +1,653 @@
+```html
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brothers Online Duel</title>
+
+<style>
+*{box-sizing:border-box}
+
+body{
+ margin:0;
+ background:#080b18;
+ color:white;
+ font-family:Arial;
+ text-align:center;
+}
+
+header{
+ padding:25px 10px;
+ background:linear-gradient(90deg,#111b45,#35104d);
+ border-bottom:2px solid #00eaff;
+}
+
+h1{
+ color:#00eaff;
+ text-shadow:0 0 15px #00eaff;
+}
+
+.panel{
+ background:#121a30;
+ border:1px solid #334;
+ border-radius:15px;
+ padding:18px;
+ margin:15px auto;
+ width:min(94%,700px);
+}
+
+input{
+ padding:13px;
+ border-radius:8px;
+ border:1px solid #00eaff;
+ background:#080b18;
+ color:white;
+ width:90%;
+ max-width:300px;
+ font-size:16px;
+ margin:8px;
+ text-align:center;
+}
+
+button{
+ padding:13px 22px;
+ border:0;
+ border-radius:9px;
+ background:#00cfff;
+ color:#07101d;
+ font-weight:bold;
+ cursor:pointer;
+ margin:7px;
+ font-size:15px;
+}
+
+button:disabled{opacity:.5;cursor:not-allowed}
+
+#status{color:#ffe66d;margin:12px}
+
+.scores{
+ display:flex;
+ justify-content:space-around;
+ gap:10px;
+}
+
+.score{
+ padding:15px;
+ border-radius:12px;
+ background:#19223a;
+ flex:1;
+}
+
+.blue{color:#00d9ff}
+.red{color:#ff416c}
+
+#game{
+ width:min(94%,850px);
+ background:#101b35;
+ border:2px solid #00eaff;
+ border-radius:12px;
+ margin:15px auto;
+ display:block;
+}
+
+.controls{
+ line-height:2;
+ color:#aaa;
+ padding:10px;
+}
+
+footer{padding:25px;color:#777}
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>⚡ BROTHERS DUEL ⚡</h1>
+<p>HARSHIT 🆚 PRITHVI RAJ</p>
+<p>ONLINE MULTIPLAYER BATTLE</p>
+</header>
+
+<div class="panel" id="lobby">
+
+<h2>🌐 ONLINE GAME ROOM</h2>
+
+<input id="roomInput" placeholder="Enter Room Code" maxlength="12">
+
+<br>
+
+<button id="createBtn">CREATE ROOM</button>
+<button id="joinBtn">JOIN ROOM</button>
+
+<p id="status">Connect to start playing!</p>
+
+</div>
+
+<div class="panel">
+
+<div class="scores">
+
+<div class="score">
+<h3 class="blue">🔵 HARSHIT</h3>
+<h2 id="score1">0</h2>
+<p id="p1status">Waiting...</p>
+</div>
+
+<div class="score">
+<h3 class="red">🔴 PRITHVI RAJ</h3>
+<h2 id="score2">0</h2>
+<p id="p2status">Waiting...</p>
+</div>
+
+</div>
+
+<h2 id="winner"></h2>
+
+</div>
+
+<canvas id="game" width="850" height="400"></canvas>
+
+<div class="controls">
+<b class="blue">HARSHIT:</b> A / D = Move | W = Jump
+<br>
+<b class="red">PRITHVI:</b> ← / → = Move | ↑ = Jump
+<br><br>
+Collect stars ⭐ and reach 10 points!
+</div>
+
+<button id="restartBtn" disabled>🔄 RESTART</button>
+
+<footer>
+MADE FOR TWO BROTHERS ❤️
+<br>
+BROTHERS FOREVER • CHAMPIONS FOREVER
+</footer>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+
+// =================================
+// 1. FIREBASE CONFIGURATION
+// =================================
+
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "YOUR_DATABASE_URL",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+firebase.initializeApp(firebaseConfig);
+
+const auth = firebase.auth();
+const db = firebase.database();
+
+// =================================
+// 2. GAME VARIABLES
+// =================================
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = 850;
+const H = 400;
+const ground = 345;
+
+let room = null;
+let playerId = null;
+let myPlayer = null;
+let gameData = {};
+let gameActive = false;
+let keys = {};
+let lastSend = 0;
+
+let players = {
+  P1:{x:100,y:310,v:0},
+  P2:{x:700,y:310,v:0}
+};
+
+let star = {x:420,y:200,id:1};
+
+// =================================
+// 3. AUTHENTICATION
+// =================================
+
+auth.signInAnonymously()
+.then(()=>{
+  document.getElementById("status").textContent =
+  "Connected! Create or join a room.";
+})
+.catch(e=>{
+  document.getElementById("status").textContent =
+  "Login error: "+e.message;
+});
+
+// =================================
+// 4. CREATE ROOM
+// =================================
+
+function randomCode(){
+ return Math.random().toString(36).substring(2,8).toUpperCase();
+}
+
+document.getElementById("createBtn").onclick = async()=>{
+
+ if(!auth.currentUser) return alert("Please wait for connection.");
+
+ const code=randomCode();
+
+ const initialData={
+   status:"waiting",
+   score1:0,
+   score2:0,
+   star:{x:420,y:180,id:1,claimed:false},
+   players:{
+     P1:{x:100,y:310,online:true},
+     P2:{x:700,y:310,online:false}
+   },
+   winner:null
+ };
+
+ try{
+   await db.ref("rooms/"+code).set(initialData);
+   await connectRoom(code,"P1");
+
+   document.getElementById("status").textContent =
+   "Room created! Share code: "+code;
+
+   document.getElementById("roomInput").value=code;
+
+ }catch(e){
+   alert(e.message);
+ }
+
+};
+
+// =================================
+// 5. JOIN ROOM
+// =================================
+
+document.getElementById("joinBtn").onclick = async()=>{
+
+ const code=document.getElementById("roomInput").value
+ .trim().toUpperCase();
+
+ if(!code) return alert("Enter room code!");
+
+ const ref=db.ref("rooms/"+code);
+
+ try{
+
+   const snap=await ref.once("value");
+
+   if(!snap.exists()){
+     return alert("Room not found!");
+   }
+
+   const data=snap.val();
+
+   if(data.players.P2.online){
+     return alert("Room is full!");
+   }
+
+   await connectRoom(code,"P2");
+
+ }catch(e){
+   alert(e.message);
+ }
+
+};
+
+// =================================
+// 6. CONNECT PLAYERS
+// =================================
+
+async function connectRoom(code,id){
+
+ room=code;
+ playerId=id;
+ myPlayer=id==="P1"?players.P1:players.P2;
+
+ const ref=db.ref("rooms/"+room);
+
+ await ref.child("players/"+id).update({
+   online:true
+ });
+
+ await ref.child("status").set("playing");
+
+ document.getElementById("lobby").style.display="block";
+
+ document.getElementById("status").textContent =
+ "ROOM: "+room+" | YOU ARE "+(id==="P1"?"HARSHIT":"PRITHVI RAJ");
+
+ document.getElementById("restartBtn").disabled=false;
+
+ gameActive=true;
+
+ // Listen for all game updates
+
+ ref.on("value",snap=>{
+
+   if(!snap.exists()) return;
+
+   gameData=snap.val();
+
+   if(gameData.players){
+
+     for(let id of ["P1","P2"]){
+
+       if(id!==playerId && gameData.players[id]){
+         players[id].x=gameData.players[id].x;
+         players[id].y=gameData.players[id].y;
+       }
+
+     }
+
+   }
+
+   document.getElementById("score1").textContent =
+   gameData.score1||0;
+
+   document.getElementById("score2").textContent =
+   gameData.score2||0;
+
+   document.getElementById("p1status").textContent =
+   gameData.players.P1.online?"ONLINE":"OFFLINE";
+
+   document.getElementById("p2status").textContent =
+   gameData.players.P2.online?"ONLINE":"OFFLINE";
+
+   if(gameData.star) star=gameData.star;
+
+   if(gameData.winner){
+     document.getElementById("winner").textContent =
+     "🏆 "+gameData.winner+" WINS!";
+     gameActive=false;
+   }else{
+     document.getElementById("winner").textContent="";
+     gameActive=true;
+   }
+
+ });
+
+}
+
+// =================================
+// 7. KEYBOARD CONTROLS
+// =================================
+
+document.addEventListener("keydown",e=>{
+ keys[e.key.toLowerCase()]=true;
+
+ if(["ArrowLeft","ArrowRight","ArrowUp"," "].includes(e.key)){
+   e.preventDefault();
+ }
+});
+
+document.addEventListener("keyup",e=>{
+ keys[e.key.toLowerCase()]=false;
+});
+
+// =================================
+// 8. PLAYER MOVEMENT
+// =================================
+
+function update(){
+
+ if(!gameActive || !myPlayer) return;
+
+ let left=playerId==="P1"?"a":"arrowleft";
+ let right=playerId==="P1"?"d":"arrowright";
+ let jump=playerId==="P1"?"w":"arrowup";
+
+ if(keys[left]) myPlayer.x-=4;
+ if(keys[right]) myPlayer.x+=4;
+
+ if(keys[jump] && myPlayer.y>=310){
+   myPlayer.v=-11;
+ }
+
+ myPlayer.v+=0.5;
+ myPlayer.y+=myPlayer.v;
+
+ if(myPlayer.y>310){
+   myPlayer.y=310;
+   myPlayer.v=0;
+ }
+
+ myPlayer.x=Math.max(0,Math.min(815,myPlayer.x));
+
+ // Send movement to Firebase
+
+ if(Date.now()-lastSend>70){
+
+   lastSend=Date.now();
+
+   db.ref("rooms/"+room+"/players/"+playerId).update({
+     x:myPlayer.x,
+     y:myPlayer.y,
+     online:true
+   });
+
+ }
+
+ checkStar();
+
+}
+
+// =================================
+// 9. COLLECT STAR
+// =================================
+
+async function checkStar(){
+
+ if(!star || star.claimed) return;
+
+ const dx=myPlayer.x+17-star.x;
+ const dy=myPlayer.y+17-star.y;
+
+ if(Math.sqrt(dx*dx+dy*dy)<28){
+
+   const starRef=db.ref("rooms/"+room+"/star");
+
+   try{
+
+     const result=await starRef.transaction(current=>{
+
+       if(!current || current.claimed) return;
+
+       return {...current,claimed:true};
+
+     });
+
+     if(result.committed){
+
+       const scoreKey=playerId==="P1"?"score1":"score2";
+
+       const scoreRef=db.ref("rooms/"+room+"/"+scoreKey);
+
+       const newScore=(await scoreRef.transaction(n=>(n||0)+1));
+
+       if(newScore.committed && newScore.snapshot.val()>=10){
+
+         await db.ref("rooms/"+room+"/winner").transaction(
+           winner=>winner || (playerId==="P1"?"HARSHIT":"PRITHVI RAJ")
+         );
+
+       }
+
+       setTimeout(async()=>{
+
+         const newId=star.id+1;
+
+         await starRef.set({
+           x:50+Math.random()*750,
+           y:80+Math.random()*190,
+           id:newId,
+           claimed:false
+         });
+
+       },500);
+
+     }
+
+   }catch(e){
+     console.error(e);
+   }
+
+ }
+
+}
+
+// =================================
+// 10. DRAW GAME
+// =================================
+
+function draw(){
+
+ ctx.clearRect(0,0,W,H);
+
+ // Background
+
+ for(let i=0;i<65;i++){
+   ctx.fillStyle="#ffffff55";
+   ctx.fillRect((i*137)%W,(i*79)%290,2,2);
+ }
+
+ // Ground
+
+ ctx.fillStyle="#18233d";
+ ctx.fillRect(0,345,W,55);
+
+ ctx.strokeStyle="#00eaff";
+ ctx.lineWidth=3;
+ ctx.beginPath();
+ ctx.moveTo(0,345);
+ ctx.lineTo(W,345);
+ ctx.stroke();
+
+ // Draw star
+
+ if(star && !star.claimed){
+
+   ctx.fillStyle="#ffe66d";
+   ctx.shadowBlur=20;
+   ctx.shadowColor="#ffe66d";
+
+   ctx.font="28px Arial";
+   ctx.fillText("⭐",star.x-14,star.y+10);
+
+   ctx.shadowBlur=0;
+ }
+
+ // Draw players
+
+ drawPlayer(players.P1,"#00d9ff","HARSHIT");
+ drawPlayer(players.P2,"#ff315b","PRITHVI");
+
+ requestAnimationFrame(draw);
+
+}
+
+function drawPlayer(p,color,name){
+
+ ctx.save();
+
+ ctx.fillStyle=color;
+ ctx.shadowBlur=20;
+ ctx.shadowColor=color;
+
+ ctx.fillRect(p.x,p.y,35,35);
+
+ ctx.shadowBlur=0;
+ ctx.fillStyle="white";
+
+ ctx.fillRect(p.x+8,p.y+9,6,6);
+ ctx.fillRect(p.x+22,p.y+9,6,6);
+
+ ctx.font="bold 12px Arial";
+ ctx.textAlign="center";
+ ctx.fillText(name,p.x+17,p.y-12);
+
+ ctx.restore();
+
+}
+
+// =================================
+// 11. RESTART
+// =================================
+
+document.getElementById("restartBtn").onclick=async()=>{
+
+ if(!room || !playerId) return;
+
+ if(playerId!=="P1"){
+   return alert("Only Harshit (room creator) can restart!");
+ }
+
+ const snap=await db.ref("rooms/"+room).once("value");
+ const data=snap.val();
+
+ if(!data.players.P2.online){
+   return alert("Wait for both players!");
+ }
+
+ await db.ref("rooms/"+room).update({
+
+   score1:0,
+   score2:0,
+   winner:null,
+   status:"playing",
+
+   star:{
+     x:420,
+     y:180,
+     id:Date.now(),
+     claimed:false
+   },
+
+   players:{
+     P1:{x:100,y:310,online:true},
+     P2:{x:700,y:310,online:true}
+   }
+
+ });
+
+ players.P1.x=100;
+ players.P1.y=310;
+ players.P1.v=0;
+
+ players.P2.x=700;
+ players.P2.y=310;
+ players.P2.v=0;
+
+ gameActive=true;
+
+};
+
+// =================================
+// 12. START
+// =================================
+
+function loop(){
+ update();
+ requestAnimationFrame(loop);
+}
+
+draw();
+loop();
+
+</script>
+
+</body>
+</html>
+```
